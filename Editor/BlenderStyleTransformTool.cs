@@ -34,6 +34,10 @@ public static class BlenderStyleTransformTool
         XY  // Shift+Z (exclude Z)
     }
 
+    private static readonly Color AxisColorX  = new Color(0.86f, 0.08f, 0.13f);
+    private static readonly Color AxisColorY  = new Color(0.26f, 0.72f, 0.11f);
+    private static readonly Color AxisColorZ  = new Color(0.09f, 0.27f, 0.83f);
+
     private static TransformMode currentMode = TransformMode.None;
     private static AxisFilter currentAxisFilter = AxisFilter.None;
     private static Vector2 mouseStartPos;
@@ -227,6 +231,7 @@ public static class BlenderStyleTransformTool
     private static void SetAxisFilter(AxisFilter filter)
     {
         currentAxisFilter = filter;
+        SceneView.RepaintAll();
     }
 
     private static void UpdateTransform(Vector2 mousePos)
@@ -473,6 +478,9 @@ public static class BlenderStyleTransformTool
         SceneView sceneView = SceneView.lastActiveSceneView;
         if (sceneView == null) return;
 
+        // Draw world-space axis line(s) before the GUI overlay
+        DrawAxisLines();
+
         Handles.BeginGUI();
         
         GUILayout.BeginArea(new Rect(10, 10, 300, 100));
@@ -497,6 +505,136 @@ public static class BlenderStyleTransformTool
         GUILayout.EndArea();
         
         Handles.EndGUI();
+    }
+
+    private static Vector3 GetSelectionCenter()
+    {
+        if (originalPositions == null || originalPositions.Length == 0)
+            return Vector3.zero;
+        Vector3 sum = Vector3.zero;
+        for (int i = 0; i < originalPositions.Length; i++)
+            sum += originalPositions[i];
+        return sum / originalPositions.Length;
+    }
+
+    private static void DrawAxisLines()
+    {
+        if (currentAxisFilter == AxisFilter.None) return;
+        if (Event.current.type != EventType.Repaint) return;
+
+        Vector3 center = GetSelectionCenter();
+
+        switch (currentAxisFilter)
+        {
+            case AxisFilter.X:
+                DrawAxisLine(center, Vector3.right,   AxisColorX);
+                break;
+            case AxisFilter.Y:
+                DrawAxisLine(center, Vector3.up,      AxisColorY);
+                break;
+            case AxisFilter.Z:
+                DrawAxisLine(center, Vector3.forward, AxisColorZ);
+                break;
+            case AxisFilter.YZ: // Shift+X: Y and Z active
+                DrawAxisLine(center, Vector3.up,      AxisColorY);
+                DrawAxisLine(center, Vector3.forward, AxisColorZ);
+                break;
+            case AxisFilter.XZ: // Shift+Y: X and Z active
+                DrawAxisLine(center, Vector3.right,   AxisColorX);
+                DrawAxisLine(center, Vector3.forward, AxisColorZ);
+                break;
+            case AxisFilter.XY: // Shift+Z: X and Y active
+                DrawAxisLine(center, Vector3.right,   AxisColorX);
+                DrawAxisLine(center, Vector3.up,      AxisColorY);
+                break;
+        }
+    }
+
+    private static void DrawAxisLine(Vector3 center, Vector3 worldAxis, Color color)
+    {
+        Camera cam = SceneView.lastActiveSceneView?.camera;
+        if (cam == null) return;
+
+        // Project center to screen — skip if it's behind the camera
+        Vector3 cs = cam.WorldToScreenPoint(center);
+        if (cs.z <= cam.nearClipPlane) return;
+
+        float depth = cs.z;
+        float cx = cs.x, cy = cs.y;
+
+        // Project two points 100 units along the axis in both directions to get
+        // a reliable screen-space direction regardless of world-space scale
+        Vector3 fwd = cam.WorldToScreenPoint(center + worldAxis * 100f);
+        Vector3 bwd = cam.WorldToScreenPoint(center - worldAxis * 100f);
+
+        float dx, dy;
+        if (fwd.z > cam.nearClipPlane && bwd.z > cam.nearClipPlane)
+        {
+            dx = fwd.x - bwd.x;
+            dy = fwd.y - bwd.y;
+        }
+        else if (fwd.z > cam.nearClipPlane)
+        {
+            dx = fwd.x - cx;
+            dy = fwd.y - cy;
+        }
+        else if (bwd.z > cam.nearClipPlane)
+        {
+            dx = cx - bwd.x;
+            dy = cy - bwd.y;
+        }
+        else return;
+
+        // If axis is pointing almost directly at the camera the screen projection
+        // collapses to a point — nothing useful to draw
+        if (dx * dx + dy * dy < 0.01f) return;
+
+        // Clip the infinite screen-space line to the viewport rectangle
+        if (!ClipLineToViewport(cx, cy, dx, dy, cam.pixelWidth, cam.pixelHeight, out Vector2 p0, out Vector2 p1))
+            return;
+
+        // Back-project the clipped screen endpoints to world space at the object's depth
+        Vector3 worldA = cam.ScreenToWorldPoint(new Vector3(p0.x, p0.y, depth));
+        Vector3 worldB = cam.ScreenToWorldPoint(new Vector3(p1.x, p1.y, depth));
+
+        Color prev = Handles.color;
+        Handles.color = color;
+        Handles.DrawAAPolyLine(2f, worldA, worldB);
+        Handles.color = prev;
+    }
+
+    // Parametric viewport clip (Liang-Barsky style).
+    // Line: (cx + t*dx, cy + t*dy).  Finds the visible t interval inside [0,w]x[0,h].
+    private static bool ClipLineToViewport(float cx, float cy, float dx, float dy,
+                                           float w,  float h,
+                                           out Vector2 p0, out Vector2 p1)
+    {
+        float tMin = float.NegativeInfinity;
+        float tMax = float.PositiveInfinity;
+
+        if (Mathf.Abs(dx) > 1e-6f)
+        {
+            float t1 = -cx / dx;
+            float t2 = (w - cx) / dx;
+            if (dx > 0) { tMin = Mathf.Max(tMin, t1); tMax = Mathf.Min(tMax, t2); }
+            else        { tMin = Mathf.Max(tMin, t2); tMax = Mathf.Min(tMax, t1); }
+        }
+        else if (cx < 0 || cx > w) { p0 = p1 = Vector2.zero; return false; }
+
+        if (Mathf.Abs(dy) > 1e-6f)
+        {
+            float t1 = -cy / dy;
+            float t2 = (h - cy) / dy;
+            if (dy > 0) { tMin = Mathf.Max(tMin, t1); tMax = Mathf.Min(tMax, t2); }
+            else        { tMin = Mathf.Max(tMin, t2); tMax = Mathf.Min(tMax, t1); }
+        }
+        else if (cy < 0 || cy > h) { p0 = p1 = Vector2.zero; return false; }
+
+        if (tMin > tMax) { p0 = p1 = Vector2.zero; return false; }
+
+        p0 = new Vector2(cx + tMin * dx, cy + tMin * dy);
+        p1 = new Vector2(cx + tMax * dx, cy + tMax * dy);
+        return true;
     }
 
     // Converts a GUI-space mouse position to a world-space point on an imaginary plane.
