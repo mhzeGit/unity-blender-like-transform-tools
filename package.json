@@ -1,0 +1,21 @@
+{
+  "name": "com.mhze.blender-transform-tool",
+  "version": "1.0.0",
+  "displayName": "Blender Style Transform Tool",
+  "description": "Minimal Blender-inspired editor transform tool for the Unity Scene View. G=Grab, R=Rotate, S=Scale with axis filtering (X/Y/Z, Shift+X/Y/Z). Uses world-space imaginary plane projection for accurate 1:1 mouse-to-world transforms.",
+  "unity": "2021.3",
+  "keywords": [
+    "editor",
+    "tool",
+    "transform",
+    "blender",
+    "grab",
+    "rotate",
+    "scale"
+  ],
+  "author": {
+    "name": "mhze"
+  },
+  "category": "Editor Extensions",
+  "dependencies": {}
+}
