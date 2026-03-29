@@ -49,6 +49,7 @@ public static class BlenderStyleTransformTool
     private static Vector3[] currentScales;
     private static Transform[] selectedTransforms;
     private static bool isTransforming = false;
+    private static bool isRightMouseHeld = false;
 
     [InitializeOnLoadMethod]
     private static void Initialize()
@@ -71,7 +72,11 @@ public static class BlenderStyleTransformTool
     private static void OnSceneViewGUI(SceneView sceneView)
     {
         Event e = Event.current;
-        
+
+        // Track RMB held state persistently (KeyDown events don't carry button state)
+        if (e.type == EventType.MouseDown && e.button == 1) isRightMouseHeld = true;
+        if (e.type == EventType.MouseUp   && e.button == 1) isRightMouseHeld = false;
+
         // Handle input based on current state
         if (isTransforming)
         {
@@ -79,8 +84,7 @@ public static class BlenderStyleTransformTool
         }
         else
         {
-            // Check if we're in Unity navigation mode (RMB held)
-            if (!IsNavigating())
+            if (!isRightMouseHeld)
             {
                 HandleModeInput(e);
             }
@@ -95,13 +99,7 @@ public static class BlenderStyleTransformTool
     
     private static bool IsNavigating()
     {
-        // Simply check if right mouse button is currently pressed in the event
-        // This avoids using Input class which conflicts with new Input System
-        Event current = Event.current;
-        return current.button == 1 && 
-               (current.type == EventType.MouseDown || 
-                current.type == EventType.MouseDrag || 
-                current.type == EventType.MouseUp);
+        return isRightMouseHeld;
     }
 
     private static void HandleModeInput(Event e)
@@ -453,6 +451,7 @@ public static class BlenderStyleTransformTool
     private static void EndTransform()
     {
         isTransforming = false;
+        isRightMouseHeld = false;
         currentMode = TransformMode.None;
         currentAxisFilter = AxisFilter.None;
         SceneView.RepaintAll();
