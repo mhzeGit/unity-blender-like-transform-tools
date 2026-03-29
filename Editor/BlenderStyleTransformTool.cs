@@ -50,6 +50,7 @@ public static class BlenderStyleTransformTool
     private static Transform[] selectedTransforms;
     private static bool isTransforming = false;
     private static bool isRightMouseHeld = false;
+    private static bool isCtrlHeld = false;
 
     [InitializeOnLoadMethod]
     private static void Initialize()
@@ -73,9 +74,11 @@ public static class BlenderStyleTransformTool
     {
         Event e = Event.current;
 
-        // Track RMB held state persistently (KeyDown events don't carry button state)
+        // Track RMB and Ctrl held state persistently (KeyDown events don't carry modifier state)
         if (e.type == EventType.MouseDown && e.button == 1) isRightMouseHeld = true;
         if (e.type == EventType.MouseUp   && e.button == 1) isRightMouseHeld = false;
+        if (e.type == EventType.KeyDown && (e.keyCode == KeyCode.LeftControl || e.keyCode == KeyCode.RightControl)) isCtrlHeld = true;
+        if (e.type == EventType.KeyUp   && (e.keyCode == KeyCode.LeftControl || e.keyCode == KeyCode.RightControl)) isCtrlHeld = false;
 
         // Handle input based on current state
         if (isTransforming)
@@ -300,7 +303,20 @@ public static class BlenderStyleTransformTool
         
         // Constrain delta to the active axis
         worldDelta = ApplyAxisFilter(worldDelta);
-        t.position = originalPos + worldDelta;
+        Vector3 newPos = originalPos + worldDelta;
+
+        if (isCtrlHeld)
+        {
+            Vector3 snap = EditorSnapSettings.move;
+            if (currentAxisFilter == AxisFilter.None || currentAxisFilter == AxisFilter.X || currentAxisFilter == AxisFilter.XZ || currentAxisFilter == AxisFilter.XY)
+                newPos.x = SnapValue(newPos.x, snap.x);
+            if (currentAxisFilter == AxisFilter.None || currentAxisFilter == AxisFilter.Y || currentAxisFilter == AxisFilter.YZ || currentAxisFilter == AxisFilter.XY)
+                newPos.y = SnapValue(newPos.y, snap.y);
+            if (currentAxisFilter == AxisFilter.None || currentAxisFilter == AxisFilter.Z || currentAxisFilter == AxisFilter.YZ || currentAxisFilter == AxisFilter.XZ)
+                newPos.z = SnapValue(newPos.z, snap.z);
+        }
+
+        t.position = newPos;
     }
 
     private static void UpdateRotate(Transform t, Quaternion originalRot, Vector2 mouseDelta, float sensitivity)
@@ -320,6 +336,10 @@ public static class BlenderStyleTransformTool
         
         // Signed angle between them around the rotation axis
         float angle = Vector3.SignedAngle(fromVec, toVec, rotAxis);
+
+        if (isCtrlHeld)
+            angle = SnapValue(angle, EditorSnapSettings.rotate);
+
         t.rotation = Quaternion.AngleAxis(angle, rotAxis) * originalRot;
     }
 
@@ -347,11 +367,20 @@ public static class BlenderStyleTransformTool
         
         float scaleMultiplier = 1f + scaleAmount;
         scaleMultiplier = Mathf.Max(0.01f, scaleMultiplier); // Prevent negative scale
+
+        if (isCtrlHeld)
+            scaleMultiplier = SnapValue(scaleMultiplier, EditorSnapSettings.scale);
         
         Vector3 scaleVector = GetScaleVector(scaleMultiplier);
         Vector3 newScale = Vector3.Scale(originalScale, scaleVector);
         newScale = ApplyScaleAxisFilter(originalScale, newScale);
         t.localScale = newScale;
+    }
+
+    private static float SnapValue(float value, float increment)
+    {
+        if (increment <= 0f) return value;
+        return Mathf.Round(value / increment) * increment;
     }
 
     private static Vector3 ApplyAxisFilter(Vector3 vector)
@@ -452,6 +481,7 @@ public static class BlenderStyleTransformTool
     {
         isTransforming = false;
         isRightMouseHeld = false;
+        isCtrlHeld = false;
         currentMode = TransformMode.None;
         currentAxisFilter = AxisFilter.None;
         SceneView.RepaintAll();
@@ -495,10 +525,14 @@ public static class BlenderStyleTransformTool
             string axisText = GetAxisFilterText();
             GUILayout.Label($"Axis: {axisText}", EditorStyles.label);
         }
+
+        if (isCtrlHeld)
+            GUILayout.Label("SNAP", EditorStyles.boldLabel);
         
         // Controls hint
         GUILayout.Label("LMB/Enter: Confirm | RMB/Esc: Cancel");
         GUILayout.Label("X/Y/Z: Filter axis | Shift+X/Y/Z: Exclude axis");
+        GUILayout.Label("Ctrl: Snap to Unity grid settings");
         
         GUILayout.EndVertical();
         GUILayout.EndArea();
