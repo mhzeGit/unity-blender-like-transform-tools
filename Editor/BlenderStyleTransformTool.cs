@@ -51,6 +51,8 @@ public static class BlenderStyleTransformTool
     private static bool isTransforming = false;
     private static bool isRightMouseHeld = false;
     private static bool isCtrlHeld = false;
+    private static bool isLocalSpace = false;
+    private static KeyCode lastAxisKey = KeyCode.None;
 
     [InitializeOnLoadMethod]
     private static void Initialize()
@@ -184,17 +186,17 @@ public static class BlenderStyleTransformTool
                 break;
                 
             case KeyCode.X:
-                SetAxisFilter(e.shift ? AxisFilter.YZ : AxisFilter.X);
+                ToggleAxisFilter(e.shift ? AxisFilter.YZ : AxisFilter.X, KeyCode.X);
                 e.Use();
                 break;
                 
             case KeyCode.Y:
-                SetAxisFilter(e.shift ? AxisFilter.XZ : AxisFilter.Y);
+                ToggleAxisFilter(e.shift ? AxisFilter.XZ : AxisFilter.Y, KeyCode.Y);
                 e.Use();
                 break;
                 
             case KeyCode.Z:
-                SetAxisFilter(e.shift ? AxisFilter.XY : AxisFilter.Z);
+                ToggleAxisFilter(e.shift ? AxisFilter.XY : AxisFilter.Z, KeyCode.Z);
                 e.Use();
                 break;
         }
@@ -204,6 +206,8 @@ public static class BlenderStyleTransformTool
     {
         currentMode = mode;
         currentAxisFilter = AxisFilter.None;
+        isLocalSpace = false;
+        lastAxisKey = KeyCode.None;
         isTransforming = true;
         mouseStartPos = Event.current.mousePosition;
         
@@ -232,6 +236,23 @@ public static class BlenderStyleTransformTool
     private static void SetAxisFilter(AxisFilter filter)
     {
         currentAxisFilter = filter;
+        SceneView.RepaintAll();
+    }
+
+    private static void ToggleAxisFilter(AxisFilter filter, KeyCode key)
+    {
+        if (currentAxisFilter == filter && lastAxisKey == key)
+        {
+            // Same key pressed again — toggle space
+            isLocalSpace = !isLocalSpace;
+        }
+        else
+        {
+            // New axis — always start in world space
+            currentAxisFilter = filter;
+            isLocalSpace = false;
+        }
+        lastAxisKey = key;
         SceneView.RepaintAll();
     }
 
@@ -293,16 +314,16 @@ public static class BlenderStyleTransformTool
     {
         // Project mouse start and current positions onto an imaginary plane at the object
         // The plane normal depends on the active axis constraint
-        Vector3 startWorld = MouseToWorldOnPlane(mouseStartPos, originalPos, GetGrabPlaneNormal(originalPos));
-        Vector3 currentWorld = MouseToWorldOnPlane(Event.current.mousePosition, originalPos, GetGrabPlaneNormal(originalPos));
+        Vector3 startWorld = MouseToWorldOnPlane(mouseStartPos, originalPos, GetGrabPlaneNormal(t, originalPos));
+        Vector3 currentWorld = MouseToWorldOnPlane(Event.current.mousePosition, originalPos, GetGrabPlaneNormal(t, originalPos));
         
         if (startWorld == Vector3.zero && currentWorld == Vector3.zero)
             return;
         
         Vector3 worldDelta = currentWorld - startWorld;
         
-        // Constrain delta to the active axis
-        worldDelta = ApplyAxisFilter(worldDelta);
+        // Constrain delta to the active axis (world or local)
+        worldDelta = ApplyAxisFilterToGrab(t, worldDelta);
         Vector3 newPos = originalPos + worldDelta;
 
         if (isCtrlHeld)
@@ -321,7 +342,7 @@ public static class BlenderStyleTransformTool
 
     private static void UpdateRotate(Transform t, Quaternion originalRot, Vector2 mouseDelta, float sensitivity)
     {
-        Vector3 rotAxis = GetRotationAxis();
+        Vector3 rotAxis = GetRotationAxis(t);
         
         // Imaginary plane at the object facing the rotation axis
         Vector3 startWorld = MouseToWorldOnPlane(mouseStartPos, t.position, rotAxis);
@@ -425,18 +446,42 @@ public static class BlenderStyleTransformTool
         }
     }
 
-    private static Vector3 GetRotationAxis()
+    private static Vector3 GetRotationAxis(Transform t = null)
     {
+        if (isLocalSpace && t != null)
+        {
+            switch (currentAxisFilter)
+            {
+                case AxisFilter.X: return t.right;
+                case AxisFilter.Y: return t.up;
+                case AxisFilter.Z: return t.forward;
+            }
+        }
         switch (currentAxisFilter)
         {
-            case AxisFilter.X:
-                return Vector3.right;
-            case AxisFilter.Y:
-                return Vector3.up;
-            case AxisFilter.Z:
-                return Vector3.forward;
-            default:
-                return Vector3.up; // Default to Y-axis rotation
+            case AxisFilter.X: return Vector3.right;
+            case AxisFilter.Y: return Vector3.up;
+            case AxisFilter.Z: return Vector3.forward;
+            default:           return Vector3.up;
+        }
+    }
+
+    // For grab: project the world delta onto the allowed local axes
+    private static Vector3 ApplyAxisFilterToGrab(Transform t, Vector3 worldDelta)
+    {
+        if (!isLocalSpace || t == null)
+            return ApplyAxisFilter(worldDelta);
+
+        switch (currentAxisFilter)
+        {
+            case AxisFilter.X:  return t.right   * Vector3.Dot(worldDelta, t.right);
+            case AxisFilter.Y:  return t.up      * Vector3.Dot(worldDelta, t.up);
+            case AxisFilter.Z:  return t.forward * Vector3.Dot(worldDelta, t.forward);
+            // Plane constraints in local space: exclude the component along the excluded local axis
+            case AxisFilter.YZ: return worldDelta - t.right   * Vector3.Dot(worldDelta, t.right);
+            case AxisFilter.XZ: return worldDelta - t.up      * Vector3.Dot(worldDelta, t.up);
+            case AxisFilter.XY: return worldDelta - t.forward * Vector3.Dot(worldDelta, t.forward);
+            default: return worldDelta;
         }
     }
 
@@ -482,6 +527,8 @@ public static class BlenderStyleTransformTool
         isTransforming = false;
         isRightMouseHeld = false;
         isCtrlHeld = false;
+        isLocalSpace = false;
+        lastAxisKey = KeyCode.None;
         currentMode = TransformMode.None;
         currentAxisFilter = AxisFilter.None;
         SceneView.RepaintAll();
@@ -523,7 +570,8 @@ public static class BlenderStyleTransformTool
         if (currentAxisFilter != AxisFilter.None)
         {
             string axisText = GetAxisFilterText();
-            GUILayout.Label($"Axis: {axisText}", EditorStyles.label);
+            string spaceText = isLocalSpace ? "LOCAL" : "GLOBAL";
+            GUILayout.Label($"Axis: {axisText}  ({spaceText})", EditorStyles.label);
         }
 
         if (isCtrlHeld)
@@ -557,28 +605,35 @@ public static class BlenderStyleTransformTool
 
         Vector3 center = GetSelectionCenter();
 
+        // Resolve axes (local or world)
+        Transform pivot = (isLocalSpace && selectedTransforms != null && selectedTransforms.Length > 0)
+            ? selectedTransforms[0] : null;
+        Vector3 axisX = pivot != null ? pivot.right   : Vector3.right;
+        Vector3 axisY = pivot != null ? pivot.up      : Vector3.up;
+        Vector3 axisZ = pivot != null ? pivot.forward : Vector3.forward;
+
         switch (currentAxisFilter)
         {
             case AxisFilter.X:
-                DrawAxisLine(center, Vector3.right,   AxisColorX);
+                DrawAxisLine(center, axisX, AxisColorX);
                 break;
             case AxisFilter.Y:
-                DrawAxisLine(center, Vector3.up,      AxisColorY);
+                DrawAxisLine(center, axisY, AxisColorY);
                 break;
             case AxisFilter.Z:
-                DrawAxisLine(center, Vector3.forward, AxisColorZ);
+                DrawAxisLine(center, axisZ, AxisColorZ);
                 break;
-            case AxisFilter.YZ: // Shift+X: Y and Z active
-                DrawAxisLine(center, Vector3.up,      AxisColorY);
-                DrawAxisLine(center, Vector3.forward, AxisColorZ);
+            case AxisFilter.YZ:
+                DrawAxisLine(center, axisY, AxisColorY);
+                DrawAxisLine(center, axisZ, AxisColorZ);
                 break;
-            case AxisFilter.XZ: // Shift+Y: X and Z active
-                DrawAxisLine(center, Vector3.right,   AxisColorX);
-                DrawAxisLine(center, Vector3.forward, AxisColorZ);
+            case AxisFilter.XZ:
+                DrawAxisLine(center, axisX, AxisColorX);
+                DrawAxisLine(center, axisZ, AxisColorZ);
                 break;
-            case AxisFilter.XY: // Shift+Z: X and Y active
-                DrawAxisLine(center, Vector3.right,   AxisColorX);
-                DrawAxisLine(center, Vector3.up,      AxisColorY);
+            case AxisFilter.XY:
+                DrawAxisLine(center, axisX, AxisColorX);
+                DrawAxisLine(center, axisY, AxisColorY);
                 break;
         }
     }
@@ -691,28 +746,32 @@ public static class BlenderStyleTransformTool
     
     // For grab: the plane normal faces the camera so free movement is intuitive,
     // but when an axis is active we use a plane that best reveals that axis.
-    private static Vector3 GetGrabPlaneNormal(Vector3 objectPos)
+    private static Vector3 GetGrabPlaneNormal(Transform t, Vector3 objectPos)
     {
         Camera cam = SceneView.lastActiveSceneView?.camera;
         if (cam == null) return Vector3.forward;
-        
+
+        // Resolve local or world axis vectors
+        Vector3 axisX = (isLocalSpace && t != null) ? t.right   : Vector3.right;
+        Vector3 axisY = (isLocalSpace && t != null) ? t.up      : Vector3.up;
+        Vector3 axisZ = (isLocalSpace && t != null) ? t.forward : Vector3.forward;
+
         switch (currentAxisFilter)
         {
             case AxisFilter.X:
-                return BestPerpendicularNormal(Vector3.right, cam.transform.forward);
+                return BestPerpendicularNormal(axisX, cam.transform.forward);
             case AxisFilter.Y:
-                return BestPerpendicularNormal(Vector3.up, cam.transform.forward);
+                return BestPerpendicularNormal(axisY, cam.transform.forward);
             case AxisFilter.Z:
-                return BestPerpendicularNormal(Vector3.forward, cam.transform.forward);
-            // Plane constraints: drag plane IS the constraint plane, whose normal is the excluded axis.
-            case AxisFilter.YZ: // Shift+X — constraint plane is YZ, normal is X
-                return Vector3.right;
-            case AxisFilter.XZ: // Shift+Y — constraint plane is XZ, normal is Y
-                return Vector3.up;
-            case AxisFilter.XY: // Shift+Z — constraint plane is XY, normal is Z
-                return Vector3.forward;
+                return BestPerpendicularNormal(axisZ, cam.transform.forward);
+            // Plane constraints: drag plane IS the constraint plane, normal is the excluded axis.
+            case AxisFilter.YZ:
+                return axisX;
+            case AxisFilter.XZ:
+                return axisY;
+            case AxisFilter.XY:
+                return axisZ;
             default:
-                // Free movement: plane faces the camera
                 return cam.transform.forward;
         }
     }
