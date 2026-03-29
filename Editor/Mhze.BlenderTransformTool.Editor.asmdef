@@ -1,5 +1,5 @@
 {
-    "name": "Mhze.BlenderTransformTool.Editor",
+    "name": "Mhze.BlenderLikeTransformTools.Editor",
     "rootNamespace": "",
     "references": [],
     "includePlatforms": [
