@@ -699,13 +699,18 @@ public static class BlenderStyleTransformTool
         switch (currentAxisFilter)
         {
             case AxisFilter.X:
-                // Moving along X: use the plane whose normal is most aligned with camera
-                // and is perpendicular to X (either Y or Z plane)
                 return BestPerpendicularNormal(Vector3.right, cam.transform.forward);
             case AxisFilter.Y:
                 return BestPerpendicularNormal(Vector3.up, cam.transform.forward);
             case AxisFilter.Z:
                 return BestPerpendicularNormal(Vector3.forward, cam.transform.forward);
+            // Plane constraints: drag plane IS the constraint plane, whose normal is the excluded axis.
+            case AxisFilter.YZ: // Shift+X — constraint plane is YZ, normal is X
+                return Vector3.right;
+            case AxisFilter.XZ: // Shift+Y — constraint plane is XZ, normal is Y
+                return Vector3.up;
+            case AxisFilter.XY: // Shift+Z — constraint plane is XY, normal is Z
+                return Vector3.forward;
             default:
                 // Free movement: plane faces the camera
                 return cam.transform.forward;
